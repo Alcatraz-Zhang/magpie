@@ -468,7 +468,7 @@ func dropGonePicks(id string, before, now map[string]bool) ([]string, error) {
 // relistPicks puts back among q's picks those of its Delisted the list now
 // has, and says whether it put any back.
 func relistPicks(q *Provider, now map[string]bool) bool {
-	if len(q.Delisted) == 0 || len(now) == 0 {
+	if q.BestInFamily || len(q.Delisted) == 0 || len(now) == 0 {
 		return false
 	}
 	var still, back []string
@@ -1814,7 +1814,7 @@ func (p Provider) ServesNone() bool { return p.NoModels && len(p.Models) == 0 }
 // the picks are taken as gone for good and the list is served as if none
 // were picked; they still come back with a list that has them.
 func (p Provider) waitsForPicks() bool {
-	return len(p.Models) == 0 && len(p.Delisted) > 0 && !p.DelistedAt.IsZero() && time.Since(p.DelistedAt) < pickWait
+	return !p.BestInFamily && len(p.Models) == 0 && len(p.Delisted) > 0 && !p.DelistedAt.IsZero() && time.Since(p.DelistedAt) < pickWait
 }
 
 // pickWait is how long a provider whose every pick left its list waits for
@@ -1827,8 +1827,8 @@ const pickWait = time.Hour
 
 // Exposed lists the models magpie offers to agents for this provider: the
 // user's picks; else the preset's; else everything, when that is few, the
-// newest of each family only under Best in family; none after Select none
-// (ServesNone).
+// newest of each family with any overrides under Best in family; none
+// after Select none (ServesNone).
 func (p Provider) Exposed() []catalog.Model {
 	if p.ServesNone() || p.waitsForPicks() {
 		return nil
@@ -1894,9 +1894,8 @@ func (p Provider) ExposedOf(avail []catalog.Model) []catalog.Model {
 	// a model listed on none of the APIs the provider has a URL for is
 	// left out before the first 24 are taken (#2094)
 	avail = p.servable(avail)
-	// Best in family: the newest of each family the list has
 	if p.BestInFamily {
-		avail = catalog.BestInFamily(avail)
+		return p.bestInFamilyOf(avail, p.BestModelLimit())
 	}
 	// another magpie's list is already the models its user exposed
 	if len(avail) <= manyModels || p.IsRemoteMagpie() {
@@ -1908,14 +1907,82 @@ func (p Provider) ExposedOf(avail []catalog.Model) []catalog.Model {
 	return avail[:manyModels]
 }
 
+func bestModelLimitOK(n int) bool {
+	return n == 0 || n == manyModels || n == 48 || n == 96 || n == 192
+}
+
+// CheckBestInFamily validates the settings used by Save and the editor's
+// preview.
+func (p Provider) CheckBestInFamily() error {
+	if n := p.BestInFamilyLimit; n != nil && !bestModelLimitOK(*n) {
+		return errors.New("Best in family limit must be 24, 48, 96, 192, unlimited or default")
+	}
+	for id, v := range p.BestInFamilyOverrides {
+		if strings.TrimSpace(id) == "" || v != 0 && v != 1 {
+			return fmt.Errorf("Best in family override needs a model ID and 0 or 1: %q = %d", id, v)
+		}
+	}
+	return nil
+}
+
+// BestModelLimit is the regular catalog's automatic limit in Best in
+// family. Zero gives it every family.
+func (p Provider) BestModelLimit() int {
+	if n := p.BestInFamilyLimit; n != nil && bestModelLimitOK(*n) {
+		return *n
+	}
+	if p.IsRemoteMagpie() {
+		return 0 // the remote already chose what it exposes
+	}
+	return manyModels
+}
+
+// bestInFamilyOf overlays the user's choices after the automatic cutoff.
+// Inclusions can add to that list and exclusions leave their slots open.
+func (p Provider) bestInFamilyOf(avail []catalog.Model, limit int) []catalog.Model {
+	best := catalog.BestInFamily(avail)
+	if limit > 0 && len(best) > limit {
+		best = best[:limit]
+	}
+	if len(p.BestInFamilyOverrides) == 0 {
+		return best
+	}
+	seen := make(map[string]bool, len(best))
+	out := best[:0]
+	for _, m := range best {
+		if v, ok := p.BestInFamilyOverrides[m.ID]; ok && v == 0 {
+			continue
+		}
+		out = append(out, m)
+		seen[m.ID] = true
+	}
+	for _, m := range avail {
+		if p.BestInFamilyOverrides[m.ID] == 1 && !seen[m.ID] {
+			out = append(out, m)
+			seen[m.ID] = true
+		}
+	}
+	return out
+}
+
 // servable is avail less the models NoAPIFor leaves out.
 func (p Provider) servable(avail []catalog.Model) []catalog.Model {
-	noAPI := p.NoAPI()
+	return p.servableWith(avail, nil)
+}
+
+func (p Provider) servableWith(avail []catalog.Model, prefs map[string]ModelPref) []catalog.Model {
+	noAPI := p.noAPIWith(prefs)
 	return slices.DeleteFunc(slices.Clone(avail), func(m catalog.Model) bool { return noAPI(m.ID) })
 }
 
+// PreviewBestInFamily applies Best in family to the current catalog with
+// the editor's staged API choices.
+func (p Provider) PreviewBestInFamily(prefs map[string]ModelPref) []catalog.Model {
+	return p.bestInFamilyOf(p.servableWith(p.Available(), prefs), p.BestModelLimit())
+}
+
 // NewestInFamily is the models Best in family would serve of avail, the
-// vendor's list (Available), before the first 24 are taken: the newest of
+// vendor's list (Available), before the limit and overrides: the newest of
 // each family among those it can be asked for (catalog.BestInFamily),
 // whichever mode is on, so the editor can draw them before it is saved.
 func (p Provider) NewestInFamily(avail []catalog.Model) []catalog.Model {
@@ -1962,6 +2029,10 @@ func (p Provider) NoAPIFor(model string) bool { return p.NoAPI()(model) }
 // URL for are found once for the list, not once for each model (they were
 // most of what NoAPIFor allocated, 16 MB of twenty window polls).
 func (p Provider) NoAPI() func(model string) bool {
+	return p.noAPIWith(nil)
+}
+
+func (p Provider) noAPIWith(prefs map[string]ModelPref) func(model string) bool {
 	if p.Account != nil {
 		return func(string) bool { return false }
 	}
@@ -1970,7 +2041,14 @@ func (p Provider) NoAPI() func(model string) bool {
 		return func(string) bool { return false }
 	}
 	return func(model string) bool {
-		apis := p.apisAmong(speaks, model)
+		var apis []Protocol
+		if set := prefs[model].API; set == nil {
+			apis = p.apisAmong(speaks, model)
+		} else if proto, ok := p.modelAPIAmong(len(speaks), Protocol(*set)); ok {
+			apis = []Protocol{proto}
+		} else {
+			apis = p.ListedAPIs(model)
+		}
 		return len(apis) > 0 && !slices.ContainsFunc(speaks, func(s Protocol) bool { return slices.Contains(apis, s) })
 	}
 }

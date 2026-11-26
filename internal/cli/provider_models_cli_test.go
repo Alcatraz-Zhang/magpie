@@ -11,6 +11,50 @@ import (
 	"github.com/yetone/magpie/internal/provider"
 )
 
+func TestProviderModelsKeepsBestInFamilyOverrides(t *testing.T) {
+	groupsHome(t)
+	const chat = "http://127.0.0.1:1/v1"
+	if err := provider.Save(provider.Provider{ID: "relay", Name: "Relay", Key: "k", Chat: chat}); err != nil {
+		t.Fatal(err)
+	}
+	ms := []catalog.Model{{ID: "gemini-3.5-pro"}, {ID: "gemini-2.5-pro"}}
+	if err := catalog.SaveLive("relay", chat, ms); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) string {
+		t.Helper()
+		out, err := stdoutOf(t, func() error { return providerCmd(append([]string{"provider"}, args...)) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	run("models", "relay", "best")
+	run("set", "relay", "best-in-family-limit=48")
+	out := run("models", "relay", "+gemini-2.5-pro", "-relay/gemini-3.5-pro")
+	p := mustFind(t, "relay")
+	if !p.BestInFamily || len(p.Models) != 0 || !strings.Contains(out, "+gemini-2.5-pro") || !strings.Contains(out, "-gemini-3.5-pro") {
+		t.Fatalf("best %v picks %v; output %q", p.BestInFamily, p.Models, out)
+	}
+	if got := p.Exposed(); len(got) != 1 || got[0].ID != "gemini-2.5-pro" {
+		t.Fatalf("overridden list: %v", got)
+	}
+	run("models", "relay", "=gemini-3.5-pro")
+	if got := mustFind(t, "relay").Exposed(); len(got) != 2 || got[0].ID != "gemini-3.5-pro" {
+		t.Fatalf("restored list: %v", got)
+	}
+	if err := providerCmd([]string{"provider", "set", "relay", "best-in-family-limit=3"}); err == nil {
+		t.Fatal("invalid limit was accepted")
+	}
+	if out := run("relay"); !strings.Contains(out, "48") {
+		t.Fatalf("the old limit was not kept: %q", out)
+	}
+	run("set", "relay", "best-in-family-limit=default")
+	if out := run("relay"); !strings.Contains(out, "24") {
+		t.Fatalf("the default limit was not restored: %q", out)
+	}
+}
+
 // magpie provider models <id> +m adds a model to those exposed and -m takes
 // one out, keeping the rest; the whole-list form still replaces the list,
 // and says it did and how many there were before (MOMO on Discord: 35

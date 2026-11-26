@@ -7760,7 +7760,7 @@ function input(value, placeholder, type = "text") {
 // editor put away (Cancel, Escape, a click outside) takes it with it (#526)
 let providerDraftRef = null, providerDraftBase = "";
 function providerDraftValue() {
-  return JSON.stringify({ ...draft, headers: headersOf(draft?.headers), modelHeaderRows: undefined, onLimits: undefined, modelPrefs: modelPrefsOfDraft() });
+  return JSON.stringify({ ...draft, dashed: undefined, bestServed: undefined, headers: headersOf(draft?.headers), modelHeaderRows: undefined, onLimits: undefined, modelPrefs: modelPrefsOfDraft() });
 }
 function providerDirty() {
   // Price boxes parse on change; a page closed while typing hasn't blurred one yet.
@@ -9523,7 +9523,7 @@ function baseAPIOf(p) {
 
 // draftOf is a saved provider as its editor's form holds it.
 function draftOf(p) {
-  return { id: p.id, name: p.name, preset: p.preset, chat: p.chat, responses: p.responses, anthropic: p.anthropic, gemini: p.gemini || "", catalog: p.catalog, decide: p.decide || "", key: "", api: baseAPIOf(p), chosen: pickedOf(p), none: !!p.noModels, best: !!p.bestInFamily, extra: [], headers: headerRows(p.headers), extraBody: extraBodyText(p.extraBody), replyHeaders: (p.replyHeaders || []).join(", "), passHeaders: (p.passHeaders || []).join(", "), icon: p.icon || "", iconFrom: p.iconFrom || "", fallback: [...(p.fallback || [])], unlisted: !!p.unlisted, hiddenDrawers: [...(p.hiddenDrawers || [])], hiddenVideomakers: [...(p.hiddenVideomakers || [])], searches: !!p.searches, unredacted: !!p.unredacted, countFree: !!p.countFree, billing: p.billing || "", insecureTLS: !!p.insecureTLS, http1: !!p.http1, clientCert: p.clientCert || "", clientKey: p.clientKey || "", serverCA: p.serverCA || "", serverPin: p.serverPin || "", resolve: p.resolve, socket: p.socket || "", limitRestOff: !!p.limitRestOff, noBalanceProbe: !!p.noBalanceProbe, upstreamProviders: !!p.upstreamProviders, passErrors: !!p.passErrors, imageFilesOff: !!p.imageFilesOff, nativeCompaction: !!p.nativeCompaction, passUserAgent: p.passUserAgent !== false, pinUpstream: !!p.pinUpstream, authHeader: p.authHeader || "", balanceURL: p.balanceURL || "", balancePath: p.balancePath || "", balanceMethod: p.balanceMethod || "", modelsURL: p.modelsURL || "", listOff: !!p.listOff, contexts: contextsText(p.contexts), outputs: contextsText(p.outputs), compacts: contextsText(p.compacts), keysUrl: p.keysUrl || "", ...proxyDraft(p), ...concurrencyDraft(p), rateWindows: (p.rateWindows || []).map((w) => ({ ...w })) };
+  return { id: p.id, name: p.name, preset: p.preset, chat: p.chat, responses: p.responses, anthropic: p.anthropic, gemini: p.gemini || "", catalog: p.catalog, decide: p.decide || "", key: "", api: baseAPIOf(p), chosen: pickedOf(p), none: !!p.noModels, best: !!p.bestInFamily, bestLimit: p.bestInFamilyLimit ?? null, bestOverrides: p.bestInFamilyOverrides || {}, extra: [], headers: headerRows(p.headers), extraBody: extraBodyText(p.extraBody), replyHeaders: (p.replyHeaders || []).join(", "), passHeaders: (p.passHeaders || []).join(", "), icon: p.icon || "", iconFrom: p.iconFrom || "", fallback: [...(p.fallback || [])], unlisted: !!p.unlisted, hiddenDrawers: [...(p.hiddenDrawers || [])], hiddenVideomakers: [...(p.hiddenVideomakers || [])], searches: !!p.searches, unredacted: !!p.unredacted, countFree: !!p.countFree, billing: p.billing || "", insecureTLS: !!p.insecureTLS, http1: !!p.http1, clientCert: p.clientCert || "", clientKey: p.clientKey || "", serverCA: p.serverCA || "", serverPin: p.serverPin || "", resolve: p.resolve, socket: p.socket || "", limitRestOff: !!p.limitRestOff, noBalanceProbe: !!p.noBalanceProbe, upstreamProviders: !!p.upstreamProviders, passErrors: !!p.passErrors, imageFilesOff: !!p.imageFilesOff, nativeCompaction: !!p.nativeCompaction, passUserAgent: p.passUserAgent !== false, pinUpstream: !!p.pinUpstream, authHeader: p.authHeader || "", balanceURL: p.balanceURL || "", balancePath: p.balancePath || "", balanceMethod: p.balanceMethod || "", modelsURL: p.modelsURL || "", listOff: !!p.listOff, contexts: contextsText(p.contexts), outputs: contextsText(p.outputs), compacts: contextsText(p.compacts), keysUrl: p.keysUrl || "", ...proxyDraft(p), ...concurrencyDraft(p), rateWindows: (p.rateWindows || []).map((w) => ({ ...w })) };
 }
 
 // duplicateProvider opens the Add form on a copy of p, its key p's unless another is pasted (#268).
@@ -9908,7 +9908,7 @@ function drawEditor(p, presetID) {
       if (priceTypedError(ed)) return;
       const picked = accountModelsDraft(p);
       if (picked === false) return pickError();
-      const body = { id: p.id, models: chosenIds(), noModels: noneChosen(), bestInFamily: bestChosen(), unlisted: draft.unlisted, hiddenDrawers: draft.hiddenDrawers, hiddenVideomakers: draft.hiddenVideomakers, fallback: draft.fallback, contexts: cx.map, outputs: ox.map, compacts: cpx.map, maxImages, proxy, accountProxies: own.map, maxConcurrency, maxAccounts, ...queue, priceRate, rateWindows, modelPrefs: modelPrefsOfDraft(), pinUpstream: !!draft.pinUpstream, unredacted: !!draft.unredacted, countFree: !!draft.countFree, billing: draft.billing || "", ...(p.carriesCompaction ? { nativeCompaction: !!draft.nativeCompaction } : {}), ...routingOfDraft(p) };
+      const body = { id: p.id, models: chosenIds(), noModels: noneChosen(), bestInFamily: bestChosen(), ...bestSettingsOfDraft(), unlisted: draft.unlisted, hiddenDrawers: draft.hiddenDrawers, hiddenVideomakers: draft.hiddenVideomakers, fallback: draft.fallback, contexts: cx.map, outputs: ox.map, compacts: cpx.map, maxImages, proxy, accountProxies: own.map, maxConcurrency, maxAccounts, ...queue, priceRate, rateWindows, modelPrefs: modelPrefsOfDraft(), pinUpstream: !!draft.pinUpstream, unredacted: !!draft.unredacted, countFree: !!draft.countFree, billing: draft.billing || "", ...(p.carriesCompaction ? { nativeCompaction: !!draft.nativeCompaction } : {}), ...routingOfDraft(p) };
       saving(saveBtn, t("Saving…"));
       saveAccountModelsDraft(picked).then(() => savePluginOptions(subOf(a.agent))).then(() => self.saveGatewayKeys?.(p)).then(() => providerAction("save", body, t("{name} saved", { name: p.name })), (e) => { doneSaving(saveBtn); editorError(e.message || String(e)); }); };
     bar.append(cancel, saveBtn);
@@ -10594,7 +10594,7 @@ function drawEditor(p, presetID) {
     }
     if (custom) { body.icon = draft.icon || "generic"; body.iconFrom = draft.iconFrom || ""; body.balanceURL = (draft.balanceURL || "").trim(); body.balancePath = (draft.balancePath || "").trim(); body.balanceMethod = draft.balanceMethod || ""; body.modelsURL = (draft.modelsURL || "").trim(); }
     if (p?.takesListOff) body.listOff = !!draft.listOff;
-    if (p) { body.fallback = draft.fallback; body.unlisted = draft.unlisted; body.hiddenDrawers = draft.hiddenDrawers; body.hiddenVideomakers = draft.hiddenVideomakers; body.noModels = noneChosen(); body.bestInFamily = bestChosen(); body.modelPrefs = modelPrefsOfDraft(); Object.assign(body, routingOfDraft(p)); }
+    if (p) { body.fallback = draft.fallback; body.unlisted = draft.unlisted; body.hiddenDrawers = draft.hiddenDrawers; body.hiddenVideomakers = draft.hiddenVideomakers; body.noModels = noneChosen(); body.bestInFamily = bestChosen(); body.modelPrefs = modelPrefsOfDraft(); Object.assign(body, routingOfDraft(p), bestSettingsOfDraft()); }
     body.searches = !!draft.searches && searchable();
     for (const k of ["libraryMCP", "libraryShared", "connectAgents"]) if (draft[k] != null) body[k] = draft[k];
     body.pinUpstream = !!draft.pinUpstream;
@@ -11562,7 +11562,7 @@ const typedIds = (v) => (v || "").split(/[,\n]/).map((id) => id.trim()).filter(B
 // chosenIds: the models picked, with the ids still in the add box, which
 // a Save takes as if Enter had been pressed on them
 function chosenIds() {
-  const typed = typedIds(draft.typed);
+  const typed = bestChosen() ? [] : typedIds(draft.typed);
   // ids typed join what the list serves, drawn dashed (none while some
   // are picked), as a click on a chip it doesn't serve does
   return [...typed[0] && draft.dashed || [], ...draft.chosen, ...typed].filter((id, i, all) => all.indexOf(id) === i);
@@ -11573,10 +11573,15 @@ const noneChosen = () => !!draft.none && !chosenIds().length;
 // Picked only, none picked: Save is refused (yuancjun)
 const pickingNone = () => !!draft.picking && !chosenIds().length;
 // bestChosen: Best in family kept, with nothing picked
-const bestChosen = () => !!draft.best && !draft.none && !chosenIds().length;
+const bestChosen = () => !!draft.best && !draft.none && !draft.chosen.length;
+
+function bestSettingsOfDraft() {
+  const typed = bestChosen() ? typedIds(draft.typed) : [];
+  return { bestInFamilyLimit: draft.bestLimit, bestInFamilyOverrides: { ...draft.bestOverrides, ...Object.fromEntries(typed.map((id) => [id, 1])) } };
+}
 
 // servedIds: the picks; none after Select none; else the vendor's list's
-const servedIds = (p) => draft.chosen[0] ? draft.chosen : draft.none || draft.picking ? [] : p.models.filter((m) => draft.best ? m.best : m.on).map((m) => m.id);
+const servedIds = (p) => draft.chosen[0] ? draft.chosen : draft.none || draft.picking ? [] : draft.bestServed ?? p.models.filter((m) => m.on).map((m) => m.id);
 
 // modelsOpen: models let out to full height (#833). MCHIPS_MAX: .mchips' max-height
 let modelsOpen = false;
@@ -11599,6 +11604,13 @@ function emptyModelsHint(p) {
 // can end in the queue's 503 (@sufeng1894 on X)
 const queuedSaid = (x) => t("Queued at its vendor, not answered: {queue}", { queue: x.queued });
 function renderModels(p) {
+  const box = el("div", "models");
+  if (!window.modelBulk) {
+    const d = draft;
+    import("./modelorder.js").then(() => { if (box.isConnected && draft === d) box.replaceWith(renderModels(p)); }, statusErr);
+    return box;
+  }
+  const best = bestFamilyModels(p, box, () => draw());
   // a chip's dot: how its model answered, when it has been asked
   const tested = (c, id) => {
     const got = modelTests[p.id];
@@ -11617,8 +11629,7 @@ function renderModels(p) {
   const apis = modelAPIs(p);
   const apiNow = (id) => draft.modelPrefs?.[id]?.api ?? p.models.find((m) => m.id === id)?.api ?? "";
   // a model on none of the provider's APIs isn't offered and is dimmed (#2094)
-  // dashed: what the vendor's list serves (Best in family: m.best)
-  const dashed = () => p.models.filter((m) => !noAPI(m) && (!draft.best || m.best)).slice(0, 24).map((m) => m.id);
+  const dashed = () => p.models.filter((m) => !noAPI(m)).slice(0, 24).map((m) => m.id);
   const noAPI = (m) => {
     const set = draft.modelPrefs?.[m.id]?.api;
     if (set === "decide") return false;
@@ -11649,6 +11660,7 @@ function renderModels(p) {
       if (again) return;
       const acts = [noTest ? { name: "Test this model", icon: PLAY_ICON, off: true, why: noTest, run() {} }
         : { name: "Test this model", icon: PLAY_ICON, run: () => testOne(id) }];
+      if (best.restore(id)) acts.push({ name: "Restore automatic selection", icon: CHECK, run: () => best.edit(id, null) });
       // asked as Codex or Claude Code asks, for a relay that serves only
       // them (耍赖天都爱 on Discord); Claude Code's once it has come
       // through magpie, its headers being the ones it came with
@@ -11684,7 +11696,6 @@ function renderModels(p) {
     }
     if (p.marksKinds && !decidesModel(p, id)) kindTag(c, modelKindNow(p, id));
   };
-  const box = el("div", "models");
   const chips = el("div", "mchips");
   const names = el("div", "mnames");
   names.dataset.provider = p.id;
@@ -11726,21 +11737,21 @@ function renderModels(p) {
     const picksOnly = draft.chosen[0] && !f && unpickedShown !== p.id && !decideOnly(p);
     // none picked: what the vendor's list serves is drawn as served (#614,
     // #1818), none after Select none
-    const served = draft.chosen[0] || draft.picking || decideOnly(p) || draft.none ? new Set() : new Set(dashed());
+    draft.bestServed = best.ids(noAPI);
+    const served = draft.chosen[0] || draft.picking || decideOnly(p) || draft.none ? new Set() : new Set(draft.bestServed ?? dashed());
     // an id added by hand joins them too (chosenIds)
     draft.dashed = [...served];
     // models that would read alike say what tells them apart (modelTells)
     const tells = modelTells(p.models);
     // by maker, the newest first (modelorder.js; WJaunita45604 on X)
-    const mo = window.modelOrder ? modelOrder(p.models, chips) : void import("./modelorder.js").then(() => chips.isConnected && draw(), () => {});
-    const put = mo ? mo.put : (c) => chips.append(c);
+    const { list, put } = modelOrder(p.models, chips);
     // a filter is a search: what it doesn't match is left out
-    for (const m of mo ? mo.list : p.models) {
-      const on = draft.chosen.includes(m.id);
+    for (const m of list) {
+      const on = draft.chosen.includes(m.id) || best.included(m.id) && served.has(m.id);
       if (f && !m.id.toLowerCase().includes(f) && !(m.name || "").toLowerCase().includes(f) && !(m.default || "").toLowerCase().includes(f)) continue;
       // past the first 80 only the picked are drawn, till the rest are asked for (#685)
       if (picksOnly && !on) { unpicked++; continue; }
-      if (shown >= 80 && !f && !showAll && !on) { hidden++; continue; }
+      if (shown >= 80 && !f && !showAll && !on && !best.restore(m.id)) { hidden++; continue; }
       const off = m.disabled;
       const c = el("button", "mchip pick" + (on ? " on" : served.has(m.id) ? " auto" : "") + (noAPI(m) || off ? " noapi" : ""));
       c.append(el("span", "", m.name && m.name !== m.id ? m.name : m.id));
@@ -11770,7 +11781,7 @@ function renderModels(p) {
       if (free) c.title = (c.title || m.id) + " · " + freeWhy(m.free, m.zero);
       if (noAPI(m)) c.title = (c.title || m.id) + "\n" + t("{p} has no URL for the API its list serves it on ({apis}), so agents aren't offered it. Add that URL, or set the API it is asked on in Model settings.", { p: p.name, apis: (apiNow(m.id) ? [apiNow(m.id)] : m.auto || []).map(apiLabel).join(" · ") });
       if (off) c.title = (c.title || m.id) + "\n" + t("Disabled in Settings › Models ({pattern}): refused on every route", { pattern: off });
-      if (served.has(m.id)) c.title = (c.title || m.id) + "\n" + t(draft.unlisted ? "Routing groups use it: none are picked, so the vendor's list is used" : "Agents see it: none are picked, so the vendor's list is used") + "\n" + t("Click to pick just this model");
+      if (!best.active() && served.has(m.id)) c.title = (c.title || m.id) + "\n" + t(draft.unlisted ? "Routing groups use it: none are picked, so the vendor's list is used" : "Agents see it: none are picked, so the vendor's list is used") + "\n" + t("Click to pick just this model");
       else if (on && draft.unlisted && !decideOnly(p)) c.title = (c.title || m.id) + "\n" + t("Picked: the routing groups it is in use it. Agents don't see it.");
       // an agent's own list can leave a pick out (Kylin_Cloud on X)
       const by = !draft.unlisted && (on || served.has(m.id)) ? hiders(m.id) : [];
@@ -11779,12 +11790,14 @@ function renderModels(p) {
       if (kb.length) c.title = (c.title || m.id) + "\n" + t("Kept out of agents' lists by {groups}, a routing group listed alone", { groups: kb.join(", ") });
       tested(c, m.id);
       menu(c, m.id);
+      best.mark(c, m.id, served.has(m.id));
       // a click picks it (#681); the last unpicked leaves none (#1831).
       // With none picked, a served (dashed) one is picked alone (#681), and
       // one the list doesn't serve joins those it does: a relay's 25th
       // model clicked left the 24 served out (onkashiko on X), where the
       // TUI's toggle adds it to them
       c.onclick = () => {
+        if (best.active()) return best.cycle(m.id);
         draft.chosen = on ? draft.chosen.filter((x) => x !== m.id) : [...served.has(m.id) ? [] : served, ...draft.chosen, m.id];
         draft.none = true;
         unpickedShown = p.id;
@@ -11793,14 +11806,15 @@ function renderModels(p) {
       put(c, m);
       shown++;
     }
-    for (const id of draft.chosen) {
+    for (const id of best.active() ? Object.keys(draft.bestOverrides) : draft.chosen) {
       if (p.models.some((m) => m.id === id) || (f && !id.toLowerCase().includes(f))) continue;
-      const c = el("button", "mchip on own");
+      const c = el("button", best.active() ? "mchip own" : "mchip on own");
       c.append(el("span", "", id));
-      c.title = t("Added by hand");
+      if (!best.active()) c.title = t("Added by hand");
       tested(c, id);
       menu(c, id);
-      c.onclick = () => { draft.chosen = draft.chosen.filter((x) => x !== id); draft.none = true; draw(); };
+      best.mark(c, id, false);
+      c.onclick = () => { if (best.active()) return best.cycle(id); draft.chosen = draft.chosen.filter((x) => x !== id); draft.none = true; draw(); };
       put(c, { id });
     }
     if (hidden || unpicked) chips.append(showRest(hidden || unpicked, () => { if (unpicked) unpickedShown = p.id; else showAll = true; draw(); }));
@@ -11815,7 +11829,7 @@ function renderModels(p) {
     why.textContent = decideOnly(p) ? t("Agents never see them: a routing group picks one as its classifier.")
       : !draft.chosen[0] && draft.picking ? t("Pick a model first.")
       : !draft.chosen[0] && draft.none ? t("None selected: no agent or routing group uses its models. Its balance and usage still show. Click a model to pick it.")
-      : bestChosen() && !draft.unlisted ? t("Best in family: agents see the newest model of each family it lists (dashed), up to {n}. A newer one it lists later takes the old one's place.", { n: 24 })
+      : best.active() ? best.hint()
       : draft.unlisted ? t(draft.chosen[0] ? "Agents don't see them: only the routing groups they are in use them." : "Vendor's list: agents don't see it, the routing groups its models are in use up to {n} of it (dashed). Click a dashed one to pick just it.", { n: 24 })
       : t(draft.chosen[0] ? "Agents see the models picked." : "Vendor's list: agents see up to {n} of its models (dashed), and those it lists later. Click a dashed one to pick just it.", { n: 24 });
     drawLost();
@@ -12246,7 +12260,7 @@ function renderModels(p) {
   };
   // what it serves, in words (#1831, #2068)
   const serves = el("div", "segs mserves");
-  const servesOpts = [["list", "Vendor's list", "Serve the vendor's list, up to {n} of it (dashed), models it lists later too"], ["picked", "Picked only", "Serve only the models picked"], ["best", "Best in family", "Best in family: agents see the newest model of each family it lists (dashed), up to {n}. A newer one it lists later takes the old one's place."], ["none", "Usage only", "Route nothing to it: no agent or routing group uses its models, and those it lists later aren't added. Its balance and usage still show."]].map(([v, name, tip]) => {
+  const servesOpts = [["list", "Vendor's list", "Serve the vendor's list, up to {n} of it (dashed), models it lists later too"], ["picked", "Picked only", "Serve only the models picked"], ["best", "Best in family", "Best in family: agents see the newest model of each family it lists (dashed), up to {n} automatic choices. A newer one it lists later takes the old one's place."], ["none", "Usage only", "Route nothing to it: no agent or routing group uses its models, and those it lists later aren't added. Its balance and usage still show."]].map(([v, name, tip]) => {
     const b = el("button", "opt", t(name));
     b.dataset.serves = v;
     b.title = t(tip, { n: 24 });
@@ -12270,59 +12284,8 @@ function renderModels(p) {
     for (const b of servesOpts) { b.classList.toggle("on", b.dataset.serves === now); b.setAttribute("aria-pressed", b.dataset.serves === now); }
     if (serves.isConnected) slide(serves, "serves");
   };
-  // every model at once (those the filter shows, when there is one), or none
-  const bulk = el("div", "mbulk");
-  const allOn = el("button", "text action", t("Select all"));
-  allOn.title = t("Pick every model listed that this provider can serve (those the filter shows)");
-  allOn.onclick = () => {
-    const f = (q?.value || "").trim().toLowerCase();
-    const ids = p.models.filter((m) => !noAPI(m)).filter((m) => !f || m.id.toLowerCase().includes(f) || (m.name || "").toLowerCase().includes(f) || (m.default || "").toLowerCase().includes(f)).map((m) => m.id);
-    draft.chosen = [...draft.chosen, ...ids.filter((id) => !draft.chosen.includes(id))];
-    draft.none = true;
-    draw();
-  };
-  const allOff = el("button", "text action", t("Select none"));
-  allOff.title = t("Unpick every model");
-  allOff.onclick = () => { draft.chosen = []; draft.none = true; draft.picking = false; draw(); };
-  bulk.append(allOn, allOff);
-  // just the free ones, offered when the list has free and paid
-  const isFree = (m) => m.free || m.zero || namedFree(m.id, m.name);
-  if (p.models.some(isFree) && !p.models.every(isFree)) {
-    const freeOn = el("button", "text action", t("Free only"));
-    freeOn.title = t("Pick only the free models (those the filter shows), unpicking the others");
-    freeOn.onclick = () => {
-      const f = (q?.value || "").trim().toLowerCase();
-      draft.chosen = p.models.filter((m) => isFree(m) && !noAPI(m) && (!f || m.id.toLowerCase().includes(f) || (m.name || "").toLowerCase().includes(f) || (m.default || "").toLowerCase().includes(f))).map((m) => m.id);
-      draft.none = true;
-      draw();
-    };
-    bulk.append(freeOn);
-  }
-  // unpicks those whose last test failed (H20 on Discord)
-  const workOn = el("button", "text action works-only", t("Working only"));
-  const failedPicks = () => {
-    const got = modelTests[p.id] || {};
-    const ids = servedIds(p);
-    return [ids, ids.filter((id) => got[id] && !got[id].ok)];
-  };
-  workOn.onclick = () => {
-    const [ids, bad] = failedPicks();
-    if (!bad.length) return;
-    draft.chosen = ids.filter((id) => !bad.includes(id));
-    draft.none = true;
-    draw();
-    status(t(bad.length === 1 ? "Unpicked 1 model that didn't answer" : "Unpicked {n} models that didn't answer", { n: bad.length }), "ok");
-  };
-  const drawWorkOn = () => {
-    // in the row only once a test has answered, not there hidden till then
-    if (!Object.values(modelTests[p.id] || {}).some((x) => x)) { workOn.remove(); return; }
-    if (!workOn.isConnected) bulk.append(workOn);
-    const bad = failedPicks()[1].length;
-    workOn.disabled = !bad;
-    workOn.title = bad ? t("Unpick the models whose last test failed; those that answered, and those not tested, stay picked")
-      : t("Every picked model that was tested answered");
-  };
-  if (!decideOnly(p)) { box.append(serves); queueMicrotask(drawServes); }
+  const { bulk, drawWorkOn } = modelBulk(p, q, noAPI, draw);
+  if (!decideOnly(p)) { box.append(serves, best.controls); queueMicrotask(drawServes); }
   if (q || p.models.length > 1) {
     if (q) { q.oninput = draw; bulk.prepend(q); }
     box.append(bulk);
@@ -12334,7 +12297,7 @@ function renderModels(p) {
   const addOne = el("button", "text action", t("Add model"));
   addOne.title = t("Add a model the list doesn't have, by its id (several: comma separated)");
   addOne.disabled = !add.value.trim();
-  const take = () => { if (!add.value.trim()) return; draft.chosen = chosenIds(); draft.typed = add.value = ""; addOne.disabled = true; draw(); };
+  const take = () => { if (!add.value.trim()) return; if (best.active()) best.add(typedIds(add.value)); else draft.chosen = chosenIds(); draft.typed = add.value = ""; addOne.disabled = true; draw(); };
   addOne.onclick = take;
   add.oninput = () => { draft.typed = add.value; addOne.disabled = !add.value.trim(); };
   add.onkeydown = (e) => {
@@ -12436,7 +12399,7 @@ function renderModels(p) {
     const [ltk, lcb] = tick(t("Fetch the model list"), !draft.listOff);
     ltk.classList.add("list-on");
     const showFetch = () => { refresh.hidden = !!draft.listOff; if (forget) forget.hidden = !!draft.listOff; };
-    lcb.onchange = () => { draft.listOff = !lcb.checked; showFetch(); };
+    lcb.onchange = () => { draft.listOff = !lcb.checked; showFetch(); if (best.active()) draw(); };
     showFetch();
     box.append(ltk);
   }

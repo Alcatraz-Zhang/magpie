@@ -168,6 +168,7 @@ func TestModelIDMovesTheUsersRefs(t *testing.T) {
 	a := findProvider(t, "relay-a")
 	a.Models = []string{"deepseek-v4.1-flash-1017", "grok-4.6"}
 	a.Contexts = map[string]int{"deepseek-v4.1-flash-1017": 64000}
+	a.BestInFamilyOverrides = map[string]int{"deepseek-v4.1-flash-1017": 0}
 	if err := Save(a); err != nil {
 		t.Fatal(err)
 	}
@@ -199,6 +200,9 @@ func TestModelIDMovesTheUsersRefs(t *testing.T) {
 	}
 	if a.Contexts["deepseek-v4.1-flash"] != 64000 || len(a.Contexts) != 1 {
 		t.Errorf("contexts %v", a.Contexts)
+	}
+	if v, ok := a.BestInFamilyOverrides["deepseek-v4.1-flash"]; !ok || v != 0 || len(a.BestInFamilyOverrides) != 1 {
+		t.Errorf("overrides %v", a.BestInFamilyOverrides)
 	}
 	if b := findProvider(t, "relay-b"); !slices.Equal(b.Fallback, []string{"relay-a/deepseek-v4.1-flash"}) {
 		t.Errorf("fallback %v", b.Fallback)

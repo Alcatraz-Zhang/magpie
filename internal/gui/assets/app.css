@@ -4178,6 +4178,7 @@ body:not(.side-nav) #addSheet > .row-head.stuck::before { opacity: 1; box-shadow
 /* served with none picked: the vendor's list stands in for the picks. Drawn
    apart from a pick (no tick, no accent): a click picks it alone (#681) */
 .mchip.auto { border-style: dashed; border-color: var(--muted); }
+.mchip.best-excluded > span:first-child { text-decoration: line-through; }
 /* listed on none of the APIs the provider has a URL for: not offered (#2094) */
 .mchip.noapi { opacity: .5; }
 /* an image model in the editor: listed, not picked */

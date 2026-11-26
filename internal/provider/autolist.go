@@ -200,6 +200,9 @@ func takeMatching(id string, isNew func(string) bool) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	if p.BestInFamily {
+		return nil, nil // Auto-include writes static picks
+	}
 	var res []matcher
 	for _, r := range p.AutoInclude {
 		if x, err := compilePattern(r); err == nil {
@@ -231,7 +234,7 @@ func takeMatching(id string, isNew func(string) bool) ([]string, error) {
 		return nil, err
 	}
 	i := slices.IndexFunc(f.Providers, func(q Provider) bool { return q.ID == id })
-	if i < 0 {
+	if i < 0 || f.Providers[i].BestInFamily {
 		return nil, nil
 	}
 	q := &f.Providers[i]

@@ -44,6 +44,8 @@ func TestCodexBestInFamilyCatalog(t *testing.T) {
 	}{
 		{"vendor list", provider.Provider{ID: "codex"}, all},
 		{"best in family", provider.Provider{ID: "codex", BestInFamily: true}, []string{"gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna", "gpt-5.6-terra"}},
+		{"overrides", provider.Provider{ID: "codex", BestInFamily: true, BestInFamilyLimit: new(48), BestInFamilyOverrides: map[string]int{"gpt-6.1-sol": 0, "gpt-6-sol": 1}}, []string{"gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-terra"}},
+		{"all excluded", provider.Provider{ID: "codex", BestInFamily: true, BestInFamilyOverrides: map[string]int{"gpt-6.1-sol": 0, "gpt-6-astra": 0, "gpt-6-luna": 0, "gpt-5.6-terra": 0}}, nil},
 		{"picked", provider.Provider{ID: "codex", Models: []string{"gpt-6-sol"}, BestInFamily: true}, []string{"gpt-6-sol"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -95,5 +97,8 @@ func TestCodexBestInFamilyCatalog(t *testing.T) {
 	}
 	if tags["best in family"] == tags["vendor list"] {
 		t.Errorf("ETag kept across Best in family: %q", tags)
+	}
+	if tags["overrides"] == tags["best in family"] {
+		t.Errorf("ETag kept across overrides: %q", tags)
 	}
 }

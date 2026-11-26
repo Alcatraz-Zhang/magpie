@@ -6,9 +6,9 @@
 // on the 30th picked it alone, so Save wrote that one and agents lost the
 // 24 they had. Now the 24 stay and it joins them, as the TUI's toggle does,
 // and so does an id added by hand, by Add model or left in the box at Save.
-// A dashed one clicked is still picked alone (#681), and Best in family's
-// newest ones are kept the same way. In every language, Chromium and
-// WebKit, at 1000 and 420.
+// A dashed one clicked is still picked alone (#681). Best in family keeps
+// its automatic list as a model chip cycles through manual overrides.
+// In every language, Chromium and WebKit, at 1000 and 420.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -45,7 +45,7 @@ function serve(lang, saves, at) {
     if (url.pathname === "/api/providers") return json(providers());
     if (url.pathname === "/api/provider/save") {
       const body = req.postDataJSON();
-      saves.push(body.models);
+      saves.push(body);
       at.chosen = body.models;
       at.best = body.bestInFamily;
       return json(providers());
@@ -111,7 +111,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(await editor.locator(".mchips .mchip").count(), 60);
         await chip(ids[40]).click();
         await save();
-        assert.deepEqual(saves.at(-1), [...first24, ids[29], ids[40]]);
+        assert.deepEqual(saves.at(-1).models, [...first24, ids[29], ids[40]]);
 
         // saved picks: one more joins them
         await open();
@@ -119,14 +119,14 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await editor.locator(".mchips .mchips-rest").click();
         await chip(ids[50]).click();
         await save();
-        assert.deepEqual(saves.at(-1), [...first24, ids[29], ids[40], ids[50]]);
+        assert.deepEqual(saves.at(-1).models, [...first24, ids[29], ids[40], ids[50]]);
 
         // a dashed one, with none picked, is still picked alone (#681)
         await again([], false);
         await chip(ids[3]).click();
         assert.deepEqual(await picked(), [ids[3]]);
         await save();
-        assert.deepEqual(saves.at(-1), [ids[3]]);
+        assert.deepEqual(saves.at(-1).models, [ids[3]]);
 
         // an id added by hand joins the 24, by Add model and by Save
         for (const how of ["add", "save"]) {
@@ -138,7 +138,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
             assert.equal(await picked().then((l) => l.length), 25);
           }
           await save();
-          assert.deepEqual(saves.at(-1), [...first24, "my-own-model"], how);
+          assert.deepEqual(saves.at(-1).models, [...first24, "my-own-model"], how);
         }
 
         // Best in family: the newest of each kept, the one clicked beside them
@@ -146,8 +146,12 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(await seg("best").getAttribute("aria-pressed"), "true");
         assert.equal(await editor.locator(".mchips .mchip.auto").count(), 10);
         await chip(ids[33]).click();
+        assert.equal(await chip(ids[33]).evaluate((c) => c.classList.contains("best-excluded")), true);
+        await chip(ids[33]).click();
         await save();
-        assert.deepEqual(saves.at(-1), [...best, ids[33]]);
+        assert.equal(saves.at(-1).bestInFamily, true);
+        assert.deepEqual(saves.at(-1).models, []);
+        assert.deepEqual(saves.at(-1).bestInFamilyOverrides, { [ids[33]]: 1 });
 
         // Usage only: nothing served, so a click picks just it
         await again([], false);

@@ -84,6 +84,7 @@ const providerUsage = `usage:
                                           errors=pass sends the agent its errors as the vendor sent them:
                                           asked once, nothing read into them, no other provider tried;
                                           errors=magpie, the default, has magpie handle them
+                                          best-in-family-limit=24|48|96|192|unlimited|default caps automatic choices
   magpie provider key <id> <key>          change the API key
   magpie provider keys <id> [add [key…|-]]   print every key, one a line, or add keys (as words,
                                           or one a line on stdin), to carry them to another magpie
@@ -92,7 +93,8 @@ const providerUsage = `usage:
   magpie provider models <id> [ids…]      fetch the vendor's model list, or choose which models to expose:
                                           ids… replace the list, +id adds one, -id takes one out, all: the default,
                                           none: serve none of them, its balance and usage still shown,
-                                          best: only the newest of each family it lists (Opus 5.6 replaces 5.5 once listed)
+                                          best: the newest of each family it lists (Opus 5.6 replaces 5.5 once listed);
+                                          in best, +id adds, -id excludes and =id restores the automatic choice
   magpie provider refresh <id>            fetch the vendor's model list again (as the app's Fetch models)
   magpie provider refresh-every <id> [6h|1d|off]
                                           have the gateway (magpie serve, the app) fetch the list again by itself
@@ -503,7 +505,7 @@ func notExposed(p provider.Provider) ([]string, string) {
 	}
 	why := "not picked"
 	if len(p.Models) == 0 && p.BestInFamily {
-		why = "best in family: an older one of its family"
+		why = "best in family: outside the automatic list or excluded"
 	} else if len(p.Models) == 0 {
 		why = fmt.Sprintf("none picked, so only the first %d", len(shown))
 	}
@@ -810,6 +812,16 @@ func providerCmd(args []string) error {
 		}
 		if len(rest) > 1 {
 			before := *p
+			if p.BestInFamily && slices.ContainsFunc(rest[1:], isModelOverride) {
+				if err := editModelOverrides(p, rest[1:]); err != nil {
+					return err
+				}
+				if err := provider.Save(*p); err != nil {
+					return err
+				}
+				printPicksChange(before, *p, rest[1:])
+				return showProvider(*p)
+			}
 			// none: no model served at all, the provider kept for its
 			// balance and usage (#1818); best: the newest of each family
 			// the vendor lists (Best in family); all is the vendor's list
@@ -1117,7 +1129,27 @@ func showProviderAsking(p provider.Provider, ask bool) error {
 		kv("refresh", "every "+p.RefreshSchedule()+muted.Render("  the gateway fetches its list by itself"))
 	}
 	if len(p.AutoInclude) > 0 {
-		kv("include", strings.Join(p.AutoInclude, " ")+muted.Render("  newly listed models these match are exposed"))
+		why := "  newly listed models these match are exposed"
+		if p.BestInFamily {
+			why = "  paused in Best in family"
+		}
+		kv("include", strings.Join(p.AutoInclude, " ")+muted.Render(why))
+	}
+	if p.BestInFamily {
+		limit := "unlimited"
+		if n := p.BestModelLimit(); n > 0 {
+			limit = strconv.Itoa(n)
+		}
+		kv("automatic", "best in family · "+limit)
+		var overrides []string
+		for _, id := range slices.Sorted(maps.Keys(p.BestInFamilyOverrides)) {
+			sign := "-"
+			if p.BestInFamilyOverrides[id] == 1 {
+				sign = "+"
+			}
+			overrides = append(overrides, sign+id)
+		}
+		kv("overrides", strings.Join(overrides, ", "))
 	}
 	ms := p.Exposed()
 	src := "models.dev"
@@ -1282,6 +1314,19 @@ func applyPairs(p *provider.Provider, pairs []string) error {
 			p.Catalog = v
 		case "models":
 			p.Models = splitIDs(v, nil)
+		case "best-in-family-limit":
+			switch strings.ToLower(v) {
+			case "default":
+				p.BestInFamilyLimit = nil
+			case "unlimited":
+				p.BestInFamilyLimit = new(0)
+			default:
+				n, err := strconv.Atoi(v)
+				if err != nil {
+					return fmt.Errorf("invalid Best in family limit %q", v)
+				}
+				p.BestInFamilyLimit = &n
+			}
 		case "website":
 			p.Website = v
 		case "keys":
@@ -2512,6 +2557,38 @@ func printMoved(moved []agent.Move) {
 	}
 }
 
+func isModelOverride(s string) bool {
+	return len(s) > 1 && strings.ContainsRune("+-=", rune(s[0]))
+}
+
+// editModelOverrides applies changes in order. A later edit of the same
+// id wins, and = gives it back to Best in family's automatic list.
+func editModelOverrides(p *provider.Provider, args []string) error {
+	overrides := maps.Clone(p.BestInFamilyOverrides)
+	if overrides == nil {
+		overrides = make(map[string]int)
+	}
+	for _, a := range args {
+		if !isModelOverride(a) {
+			return fmt.Errorf("give either the whole list or only overrides (+id -id =id)")
+		}
+		id := strings.TrimPrefix(strings.TrimSpace(a[1:]), p.ID+"/")
+		if id == "" {
+			return fmt.Errorf("model ID is needed after %c", a[0])
+		}
+		switch a[0] {
+		case '+':
+			overrides[id] = 1
+		case '-':
+			overrides[id] = 0
+		case '=':
+			delete(overrides, id)
+		}
+	}
+	p.BestInFamilyOverrides = overrides
+	return nil
+}
+
 // editPicks works out a provider's picks from `magpie provider models <id>
 // args…`: plain ids replace them, all (or -) gives the default back, and
 // +id / -id add one to or take one out of the models exposed now, so a
@@ -2681,6 +2758,10 @@ func autoIncludeCmd(rest []string) error {
 	}
 	if len(p.AutoInclude) == 0 {
 		fmt.Printf("%s · no auto-include rules: a newly listed model is exposed as its picks say\n", p.Name)
+		return nil
+	}
+	if p.BestInFamily {
+		fmt.Printf("%s · auto-include rules are paused in Best in family: %s\n", p.Name, strings.Join(p.AutoInclude, " "))
 		return nil
 	}
 	fmt.Printf("%s · a newly listed model is exposed when one of these matches its id: %s\n", p.Name, strings.Join(p.AutoInclude, " "))
