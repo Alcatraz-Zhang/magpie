@@ -698,13 +698,19 @@ type Provider struct {
 	// as ever, so a file saved before it reads as it did. A pick clears it.
 	NoModels bool `json:"noModels,omitempty"`
 	// BestInFamily is the editor's Best in family (Steven on Discord): with
-	// no Models picked, of the vendor's list only the newest model of each
-	// family is served (catalog.BestInFamily), so Opus 5.6, once listed,
-	// takes Opus 5.5's place by itself. A request that names another of its
+	// no Models picked, the vendor's newest model of each family is picked
+	// automatically (catalog.BestInFamily), so Opus 5.6, once listed, takes
+	// Opus 5.5's place by itself. A request that names another of its
 	// models is still served, as one that names a model left unpicked is. A
 	// pick or Select none clears it (normalize); a file without it reads as
 	// the vendor's list, as before.
 	BestInFamily bool `json:"bestInFamily,omitempty"`
+	// BestInFamilyLimit caps the automatic list. Nil keeps the default, and
+	// zero gives it every family. Overrides are applied after that list.
+	BestInFamilyLimit *int `json:"bestInFamilyLimit,omitempty"`
+	// BestInFamilyOverrides holds exact model IDs to include (1) or exclude
+	// (0). An ID absent from it follows the automatic choice.
+	BestInFamilyOverrides map[string]int `json:"bestInFamilyOverrides,omitempty"`
 	// PickedFrom are the models the vendor listed when Models were saved: one
 	// listed since is served beside picks that held every one listed then
 	// (withNewlyListed), and one listed then and left unpicked stays out.
@@ -1046,6 +1052,10 @@ func (p Provider) clone() Provider {
 	p.Keys = slices.Clone(p.Keys)
 	p.Fallback = slices.Clone(p.Fallback)
 	p.Models = slices.Clone(p.Models)
+	if p.BestInFamilyLimit != nil {
+		p.BestInFamilyLimit = new(*p.BestInFamilyLimit)
+	}
+	p.BestInFamilyOverrides = maps.Clone(p.BestInFamilyOverrides)
 	p.PickedFrom = slices.Clone(p.PickedFrom)
 	p.Delisted = slices.Clone(p.Delisted)
 	p.AutoInclude = slices.Clone(p.AutoInclude)
@@ -1173,6 +1183,7 @@ func accountSettings(a, pk Provider) Provider {
 	a.Models, a.Unlisted, a.Off, a.Fallback, a.Routing, a.Affinity, a.KeepLogin, a.KeepLoginAs, a.Contexts, a.Family = pk.Models, pk.Unlisted, pk.Off, pk.Fallback, pk.Routing, pk.Affinity, pk.KeepLogin, pk.KeepLoginAs, pk.Contexts, pk.Family
 	a.SwitchOnly, a.RestartApp = pk.SwitchOnly, pk.RestartApp
 	a.Sink, a.NoModels, a.BestInFamily = pk.Sink, pk.NoModels, pk.BestInFamily
+	a.BestInFamilyLimit, a.BestInFamilyOverrides = pk.BestInFamilyLimit, pk.BestInFamilyOverrides
 	a.NativeCompaction = pk.NativeCompaction
 	a.PromptAsWritten = pk.PromptAsWritten
 	// a deferred tool a tool search loaded goes where it was loaded, set
@@ -1314,6 +1325,9 @@ func Slug(name string) string {
 
 // Save adds or replaces a provider.
 func Save(p Provider) error {
+	if err := p.CheckBestInFamily(); err != nil {
+		return err
+	}
 	// a key given a Vertex AI provider is refused here, before normalize
 	// drops it: it would never be sent
 	if p.IsVertex() && len(p.Keys) > 0 {
@@ -1493,7 +1507,7 @@ func sameStored(a, b Provider) bool {
 // picks again; none after Select none, or the vendor's list picked in
 // place of picks (no picks saved over some).
 func delistedWith(p Provider, was *Provider) []string {
-	if p.ServesNone() || len(p.Models) == 0 && was != nil && len(was.Models) > 0 {
+	if p.ServesNone() || p.BestInFamily || len(p.Models) == 0 && was != nil && len(was.Models) > 0 {
 		return nil
 	}
 	d := p.Delisted
@@ -1700,6 +1714,13 @@ func AddCopy(p Provider, from string) (string, error) {
 	}
 	if p.Fallback == nil {
 		p.Fallback = slices.Clone(src.Fallback)
+	}
+	p.BestInFamily = p.BestInFamily || src.BestInFamily
+	if p.BestInFamilyLimit == nil {
+		p.BestInFamilyLimit = src.BestInFamilyLimit
+	}
+	if p.BestInFamilyOverrides == nil {
+		p.BestInFamilyOverrides = src.BestInFamilyOverrides
 	}
 	p.Unlisted = p.Unlisted || src.Unlisted
 	if p.HiddenDrawers == nil {

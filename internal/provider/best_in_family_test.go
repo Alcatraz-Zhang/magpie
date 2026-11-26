@@ -2,12 +2,93 @@ package provider
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"slices"
 	"testing"
 
 	"github.com/yetone/magpie/internal/catalog"
 )
+
+func TestBestInFamilyLimitAndOverrides(t *testing.T) {
+	azureHome(t)
+	const chat = "https://relay.example.invalid/v1"
+	if err := Save(Provider{ID: "relay", Name: "Relay", Key: "k", Chat: chat, BestInFamily: true, Unlisted: true}); err != nil {
+		t.Fatal(err)
+	}
+	var models []catalog.Model
+	for i := range 65 {
+		models = append(models, catalog.Model{ID: fmt.Sprintf("relay-%c%c", 'a'+i/26, 'a'+i%26)})
+	}
+	models = append(models, catalog.Model{ID: "gemini-2.5-pro"}, catalog.Model{ID: "gemini-3.5-pro"})
+	if err := catalog.SaveLive("relay", chat, models); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveGroup(Group{Name: "Pro", Members: []string{"re:relay/gemini-.*-pro"}}); err != nil {
+		t.Fatal(err)
+	}
+	settings := func(limit int, overrides map[string]int) {
+		t.Helper()
+		data, err := os.ReadFile(Path())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg struct {
+			Providers []map[string]any  `json:"providers"`
+			Groups    []json.RawMessage `json:"groups"`
+		}
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range cfg.Providers {
+			if p["id"] == "relay" {
+				p["bestInFamilyLimit"], p["bestInFamilyOverrides"] = limit, overrides
+			}
+		}
+		data, err = json.Marshal(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(Path(), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exposed := func() []catalog.Model {
+		t.Helper()
+		p, err := Find("relay")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p.Exposed()
+	}
+	if got := exposed(); len(got) != 24 || len(routedIDs(t, "group/pro")) != 0 {
+		t.Fatalf("default: %d exposed, matches %v", len(got), routedIDs(t, "group/pro"))
+	}
+	for _, limit := range []int{96, 0} {
+		settings(limit, nil)
+		if got := exposed(); len(got) != 66 || !slices.Equal(routedIDs(t, "group/pro"), []string{"relay/gemini-3.5-pro"}) {
+			t.Fatalf("limit %d: %d exposed, matches %v", limit, len(got), routedIDs(t, "group/pro"))
+		}
+	}
+	settings(24, map[string]int{"gemini-2.5-pro": 1, "relay-aa": 1})
+	if got := exposed(); len(got) != 25 || got[23].ID != "relay-ax" || got[24].ID != "gemini-2.5-pro" {
+		t.Fatalf("manual inclusion: %v", got)
+	}
+	settings(24, map[string]int{"relay-aa": 0})
+	if got := exposed(); len(got) != 23 || got[0].ID != "relay-ab" || got[22].ID != "relay-ax" {
+		t.Fatalf("manual exclusion: %v", got)
+	}
+	settings(96, map[string]int{"gemini-3.5-pro": 0})
+	if got := routedIDs(t, "group/pro"); len(got) != 0 {
+		t.Fatalf("the excluded winner was replaced: %v", got)
+	}
+	if err := catalog.SaveLive("relay", chat, append(models, catalog.Model{ID: "gemini-4.5-pro"})); err != nil {
+		t.Fatal(err)
+	}
+	if got := routedIDs(t, "group/pro"); !slices.Equal(got, []string{"relay/gemini-4.5-pro"}) {
+		t.Fatalf("new version: %v", got)
+	}
+}
 
 // Best in family (Steven on Discord): with nothing picked, only the newest
 // model of each family the vendor lists is served, and one it lists later

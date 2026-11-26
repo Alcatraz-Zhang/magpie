@@ -895,7 +895,7 @@ func buildCodexListTag(kind string) string {
 // (Provider.Off): its picks are kept for when it is switched on again and
 // are not a narrowing now. Usage only narrows the visible native list to
 // none, as it does the general catalog; codexModels keeps hidden jobs. Best
-// in family narrows it to the newest of each family the account lists.
+// in family applies the automatic choices and model overrides there too.
 func CodexNativePicked() (map[string]bool, bool) {
 	p, ok := find(All(), "codex")
 	if !ok || p.Off {
@@ -905,13 +905,18 @@ func CodexNativePicked() (map[string]bool, bool) {
 		return nil, true
 	}
 	if len(p.Models) == 0 && p.BestInFamily {
-		// Best in family: the newest of each family the account lists
+		avail := p.Available()
+		limit := 0 // the native list was uncapped by default
+		if p.BestInFamilyLimit != nil {
+			limit = p.BestModelLimit()
+			avail = p.servable(avail)
+		}
 		keep := map[string]bool{}
-		for _, m := range catalog.BestInFamily(p.Available()) {
+		for _, m := range p.bestInFamilyOf(avail, limit) {
 			keep[m.ID] = true
 		}
-		// with no list known, the account's own is left whole
-		return keep, len(keep) > 0
+		// with no list known and no explicit settings, leave its own whole
+		return keep, len(avail) > 0 || p.BestInFamilyLimit != nil || len(p.BestInFamilyOverrides) > 0
 	}
 	if len(p.Models) == 0 {
 		return nil, false

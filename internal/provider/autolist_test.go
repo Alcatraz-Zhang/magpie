@@ -143,6 +143,64 @@ func TestAutoIncludeTakesNewlyListedMatches(t *testing.T) {
 	}
 }
 
+func TestBestInFamilyRefreshKeepsOverrides(t *testing.T) {
+	autolistHome(t)
+	r := newRelayList(t, "gpt-6.1-sol", "gpt-6-sol")
+	p := Provider{ID: "relay", Name: "Relay", Chat: r.srv.URL + "/v1", Key: "sk-relay", BestInFamily: true,
+		AutoInclude: []string{"gpt-*"}, BestInFamilyOverrides: map[string]int{"gpt-6.1-sol": 0, "gpt-6-sol": 1}}
+	if err := Save(p); err != nil {
+		t.Fatal(err)
+	}
+	if got := refetchRelay(t, p.ID); len(got) != 0 {
+		t.Fatalf("auto-include took %v while Best in family was on", got)
+	}
+	if got := servedIDs(t, p.ID); !slices.Equal(got, []string{"gpt-6-sol"}) {
+		t.Fatalf("first fetch exposed %v", got)
+	}
+	r.set("gpt-6.2-sol", "gpt-6.1-sol")
+	refetchRelay(t, p.ID)
+	if got := servedIDs(t, p.ID); !slices.Equal(got, []string{"gpt-6.2-sol"}) {
+		t.Fatalf("after the manual inclusion left: %v", got)
+	}
+	r.set("gpt-6.2-sol", "gpt-6.1-sol", "gpt-6-sol")
+	refetchRelay(t, p.ID)
+	if got := servedIDs(t, p.ID); !slices.Equal(got, []string{"gpt-6.2-sol", "gpt-6-sol"}) {
+		t.Fatalf("after it returned: %v", got)
+	}
+	q, err := Find(p.ID)
+	if err != nil || !q.BestInFamily || !slices.Equal(q.AutoInclude, p.AutoInclude) || len(q.BestInFamilyOverrides) != 2 || q.BestInFamilyOverrides["gpt-6.1-sol"] != 0 || q.BestInFamilyOverrides["gpt-6-sol"] != 1 {
+		t.Fatal("refresh changed the mode, rules, or overrides")
+	}
+}
+
+func TestBestInFamilyLeavesDelistedStaticPicks(t *testing.T) {
+	autolistHome(t)
+	r := newRelayList(t, "gpt-6-sol")
+	p := Provider{ID: "relay", Name: "Relay", Chat: r.srv.URL + "/v1", Key: "sk-relay", Models: []string{"gpt-6-sol"}}
+	if err := Save(p); err != nil {
+		t.Fatal(err)
+	}
+	refetchRelay(t, p.ID)
+	r.set("gpt-6.1-sol")
+	refetchRelay(t, p.ID)
+	q, err := Find(p.ID)
+	if err != nil || !q.waitsForPicks() {
+		t.Fatal("the provider is not waiting for its dropped static pick")
+	}
+	q.BestInFamily = true
+	if err := Save(*q); err != nil {
+		t.Fatal(err)
+	}
+	if got := servedIDs(t, p.ID); !slices.Equal(got, []string{"gpt-6.1-sol"}) {
+		t.Errorf("switching to Best in family exposed %v", got)
+	}
+	r.set("gpt-6.1-sol", "gpt-6-sol")
+	refetchRelay(t, p.ID)
+	if got := servedIDs(t, p.ID); !slices.Equal(got, []string{"gpt-6.1-sol"}) {
+		t.Errorf("a static pick returning changed the exposed list: %v", got)
+	}
+}
+
 // With nothing picked, a provider serves the first of its vendor's list
 // (manyModels). A rule adds the matching models past that slice, and keeps
 // every model served before: it never takes one away.

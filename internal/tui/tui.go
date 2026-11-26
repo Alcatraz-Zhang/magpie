@@ -84,6 +84,8 @@ type picker struct {
 	// toggle, when set, is what enter does instead of onPick: it changes
 	// the item and the list stays open, with its items anew.
 	toggle func(string) (items []agent.Option, done string, ok bool)
+	// restore clears a provider model's manual override (ctrl+e).
+	restore func(string) (items []agent.Option, done string, ok bool)
 	// refetch, on a provider's models, asks its vendor for the list again
 	// (ctrl+r): a free model list changes often (#2113)
 	refetch func() tea.Cmd
@@ -580,15 +582,6 @@ func (m model) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.pk.refetch()
 		}
 		return m, nil
-	case "ctrl+e":
-		// the profile picked, renamed on a line holding its name (#2721)
-		if m.mode == modeProfiles && len(m.pk.match) > 0 {
-			m.rename = m.pk.items[m.pk.match[m.pk.cursor]].Value
-			m.name = newInput(tr("new name"))
-			m.name.SetValue(m.rename)
-			m.mode = modeName
-		}
-		return m, nil
 	case "ctrl+d":
 		if m.mode == modeProfiles && m.pk.onDel != nil && len(m.pk.match) > 0 {
 			n := m.pk.items[m.pk.match[m.pk.cursor]].Value
@@ -596,13 +589,28 @@ func (m model) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.pk.onDel(n)
 		}
 		return m, nil
-	case "enter":
+	case "enter", "ctrl+e":
+		edit := m.pk.toggle
+		if msg.String() == "ctrl+e" {
+			// the profile picked, renamed on a line holding its name (#2721)
+			if m.mode == modeProfiles && len(m.pk.match) > 0 {
+				m.rename = m.pk.items[m.pk.match[m.pk.cursor]].Value
+				m.name = newInput(tr("new name"))
+				m.name.SetValue(m.rename)
+				m.mode = modeName
+				return m, nil
+			}
+			edit = m.pk.restore
+			if edit == nil {
+				return m, nil
+			}
+		}
 		v, ok := m.pk.choice()
 		if !ok {
 			return m, nil
 		}
-		if m.pk.toggle != nil {
-			items, done, ok := m.pk.toggle(v)
+		if edit != nil {
+			items, done, ok := edit(v)
 			m.flash, m.flashOK = done, ok
 			if ok {
 				cur := m.pk.cursor
@@ -817,6 +825,8 @@ func (m model) View() string {
 		switch {
 		case m.mode == modeProfiles:
 			footer = hints("↑↓", "move", "↵", "apply", "ctrl+e", "rename", "ctrl+d", "delete", "esc", "back")
+		case m.pk.restore != nil:
+			footer = hints("↑↓", "move", "↵", "on / off", "ctrl+e", "restore automatic selection", "ctrl+r", "fetch models again", "esc", "back")
 		case m.pk.refetch != nil:
 			footer = hints("↑↓", "move", "↵", "on / off", "ctrl+r", "fetch models again", "esc", "back")
 		case m.pk.toggle != nil:

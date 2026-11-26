@@ -529,7 +529,9 @@ type providerJSON struct {
 	NoModels   bool              `json:"noModels"` // Select none: none of its models served (#1818)
 	// Best in family: with nothing picked, only the newest model of each
 	// family it lists is served (provider.Provider.BestInFamily)
-	BestInFamily bool `json:"bestInFamily"`
+	BestInFamily          bool           `json:"bestInFamily"`
+	BestInFamilyLimit     *int           `json:"bestInFamilyLimit,omitempty"`
+	BestInFamilyOverrides map[string]int `json:"bestInFamilyOverrides,omitempty"`
 	// Groups are the routing groups ("group/<id>") each of its models is
 	// in, by model id: what an unlisted one is still used through, and the
 	// editor names those in none
@@ -1050,6 +1052,7 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 		RateWindows: p.RateWindows, RateNow: rateNowOf(p, time.Now()),
 		AccountConcurrency: p.AccountConcurrency, AccountWeights: p.AccountWeights, QueueLimit: p.QueueLimit, QueueWait: p.QueueWait, MaxRPM: p.MaxRPM, MaxImages: p.MaxImages,
 		Outputs: provider.OutputsOf(p.ID), Compacts: provider.CompactsOf(p.ID),
+		BestInFamilyLimit: p.BestInFamilyLimit, BestInFamilyOverrides: p.BestInFamilyOverrides,
 	}
 	if p.Account != nil && p.Account.Agent == p.ID {
 		out.SignInMoves = provider.SignInMovesOf(p.ID)
@@ -2301,6 +2304,10 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			// BestInFamily, for save: the editor's Best in family, kept
 			// with no model picked; a save that leaves it out keeps it
 			BestInFamily *bool `json:"bestInFamily"`
+			// null restores the limit's default; {} clears the overrides.
+			BestInFamilyLimit     json.RawMessage `json:"bestInFamilyLimit"`
+			BestInFamilyOverrides map[string]*int `json:"bestInFamilyOverrides"`
+			BestInFamilyPreview   bool            `json:"bestInFamilyPreview"`
 			// ListOff, for save: Fetch the model list unticked; a save
 			// that leaves it out keeps it
 			ListOff *bool `json:"listOff"`
@@ -2319,6 +2326,26 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 		}
 		if req.BestInFamily != nil {
 			in.BestInFamily = *req.BestInFamily
+		}
+		if req.BestInFamilyLimit != nil {
+			if err := json.Unmarshal(req.BestInFamilyLimit, &in.BestInFamilyLimit); err != nil {
+				fail(rw, err)
+				return
+			}
+		}
+		if req.BestInFamilyOverrides != nil {
+			in.BestInFamilyOverrides = make(map[string]int, len(req.BestInFamilyOverrides))
+			for id, v := range req.BestInFamilyOverrides {
+				if v == nil {
+					fail(rw, fmt.Errorf("Best in family override for %q needs 0 or 1", id))
+					return
+				}
+				in.BestInFamilyOverrides[id] = *v
+			}
+		}
+		if err := in.CheckBestInFamily(); err != nil {
+			fail(rw, err)
+			return
 		}
 		if req.ListOff != nil {
 			in.ListOff = *req.ListOff
@@ -2432,6 +2459,7 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 				pr.ZhipuTeam = in.ZhipuTeam
 				pr.NoModels = in.NoModels
 				pr.BestInFamily = in.BestInFamily
+				pr.BestInFamilyLimit, pr.BestInFamilyOverrides = in.BestInFamilyLimit, in.BestInFamilyOverrides
 				pr.ListOff = in.ListOff
 				pr.ExtraBody = in.ExtraBody
 				pr.ReplyHeaders = in.ReplyHeaders
@@ -2822,6 +2850,14 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 				// and Best in family (normalize drops it under a pick)
 				if req.BestInFamily == nil && old != nil {
 					in.BestInFamily = old.BestInFamily
+				}
+				if old != nil {
+					if req.BestInFamilyLimit == nil {
+						in.BestInFamilyLimit = old.BestInFamilyLimit
+					}
+					if in.BestInFamilyOverrides == nil {
+						in.BestInFamilyOverrides = old.BestInFamilyOverrides
+					}
 				}
 				// and the list turned off
 				if req.ListOff == nil && old != nil {
@@ -3513,6 +3549,23 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			p, err := provider.Find(in.ID)
 			if err != nil {
 				fail(rw, err)
+				return
+			}
+			if req.BestInFamilyPreview {
+				if req.BestInFamilyLimit != nil {
+					p.BestInFamilyLimit = in.BestInFamilyLimit
+				}
+				if in.BestInFamilyOverrides != nil {
+					p.BestInFamilyOverrides = in.BestInFamilyOverrides
+				}
+				if req.ListOff != nil {
+					p.ListOff = *req.ListOff
+				}
+				ids := []string{}
+				for _, m := range p.PreviewBestInFamily(req.ModelPrefs) {
+					ids = append(ids, m.ID)
+				}
+				writeJSON(rw, map[string]any{"models": ids})
 				return
 			}
 			// as long as the plugins' host bounds one providers RPC itself

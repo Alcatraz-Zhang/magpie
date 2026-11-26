@@ -9,6 +9,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"maps"
 	"math"
 	"net/url"
 	"slices"
@@ -371,6 +372,13 @@ func modelOptions(id string) []agent.Option {
 		if on[id] {
 			note = "● " + tr("on")
 		}
+		if v, ok := p.BestInFamilyOverrides[id]; p.BestInFamily && ok {
+			if v == 1 {
+				note += " · " + tr("manually included")
+			} else {
+				note += " · " + tr("manually excluded")
+			}
+		}
 		if n, ok := names[id]; ok {
 			name = n // the user's (magpie model name)
 		}
@@ -385,7 +393,32 @@ func modelOptions(id string) []agent.Option {
 	for _, x := range p.Available() {
 		add(x.ID, x.Name)
 	}
+	if p.BestInFamily {
+		for _, id := range slices.Sorted(maps.Keys(p.BestInFamilyOverrides)) {
+			add(id, "")
+		}
+	}
 	return out
+}
+
+func saveBestModelOverride(p *provider.Provider, id string, restore bool) ([]agent.Option, string, bool) {
+	verb := "restore automatic selection"
+	if restore {
+		delete(p.BestInFamilyOverrides, id)
+	} else {
+		if p.BestInFamilyOverrides == nil {
+			p.BestInFamilyOverrides = make(map[string]int)
+		}
+		if p.Chosen(id) {
+			p.BestInFamilyOverrides[id], verb = 0, "manually excluded"
+		} else {
+			p.BestInFamilyOverrides[id], verb = 1, "manually included"
+		}
+	}
+	if err := provider.Save(*p); err != nil {
+		return nil, err.Error(), false
+	}
+	return modelOptions(p.ID), id + " · " + tr(verb), true
 }
 
 // openProviderModels lists a provider's models; enter turns one on or off
@@ -405,6 +438,9 @@ func (m *model) openProviderModels(id string) {
 			p, err := provider.Find(id)
 			if err != nil {
 				return nil, err.Error(), false
+			}
+			if p.BestInFamily {
+				return saveBestModelOverride(p, model, false)
 			}
 			ids := p.Picks()
 			if len(ids) == 0 {
@@ -434,6 +470,15 @@ func (m *model) openProviderModels(id string) {
 			}
 			return items, model + " " + tr(verb), true
 		},
+	}
+	if p.BestInFamily {
+		m.pk.restore = func(model string) ([]agent.Option, string, bool) {
+			p, err := provider.Find(id)
+			if err != nil {
+				return nil, err.Error(), false
+			}
+			return saveBestModelOverride(p, model, true)
+		}
 	}
 	m.pk.refilter()
 	m.mode = modePick

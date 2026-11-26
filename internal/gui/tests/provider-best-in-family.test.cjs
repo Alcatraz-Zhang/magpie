@@ -25,7 +25,7 @@ const base = {
 const plain = { ...base, id: "plain", name: "Plain", host: "plain.example.com", chat: "https://plain.example.com/v1", models: models(() => true) };
 const best = { ...base, id: "best", name: "Best", host: "best.example.com", chat: "https://best.example.com/v1", bestInFamily: true, exposed: 2, models: models((id) => newest.includes(id)) };
 
-function serve(lang, saves) {
+function serve(lang, saves, beforePreview = () => {}) {
   const providers = { providers: [plain, best], presets: [], excluded: [], gateway: { running: true, window: true } };
   const state = { agents: [], profiles: [], settings: { lang, theme: "light" } };
   return async (route) => {
@@ -36,7 +36,26 @@ function serve(lang, saves) {
     if (url.pathname === "/api/state") return json(state);
     if (url.pathname === "/api/plugins") return json({ plugins: [] });
     if (url.pathname === "/api/providers") return json(providers);
-    if (url.pathname === "/api/provider/save") { saves.push(req.postDataJSON()); return json(providers); }
+    if (url.pathname === "/api/provider/models" && req.method() === "POST") {
+      const body = req.postDataJSON();
+      if (body.bestInFamilyPreview) {
+        const error = await beforePreview(body);
+        if (error) return route.fulfill({ status: 400, json: { error } });
+        const edit = body.bestInFamilyOverrides || {};
+        return json({ models: [...new Set([...newest.filter((id) => edit[id] !== 0), ...older.filter((id) => edit[id] === 1)])] });
+      }
+    }
+    if (url.pathname === "/api/provider/save") {
+      const body = req.postDataJSON();
+      saves.push(body);
+      if (body.bestInFamily && body.bestInFamilyOverrides && Object.keys(body.bestInFamilyOverrides).length) {
+        providers.providers = providers.providers.map((p) => p.id === body.id ? {
+          ...p, bestInFamily: true, bestInFamilyLimit: body.bestInFamilyLimit, bestInFamilyOverrides: body.bestInFamilyOverrides,
+          models: models((id) => body.bestInFamilyOverrides[id] === 1 || newest.includes(id) && body.bestInFamilyOverrides[id] !== 0),
+        } : p);
+      }
+      return json(providers);
+    }
     if (url.pathname === "/api/groups") return json({ groups: [] });
     if (url.pathname.startsWith("/api/")) return json({});
     const file = path.join(assets, url.pathname === "/" ? "index.html" : url.pathname);
@@ -55,6 +74,74 @@ const words = {
 };
 
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
+  test(`${engine}: model chips edit Best in family without changing modes`, { timeout: 25000 }, async (t) => {
+    const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    page.setDefaultTimeout(5000);
+    const saves = [], started = Promise.withResolvers(), release = Promise.withResolvers();
+    let failed = false;
+    await page.route("**/*", serve("en", saves, async (body) => {
+      if (body.bestInFamilyLimit === 48 && !failed) {
+        failed = true;
+        return "The model preview was interrupted";
+      }
+      if (body.bestInFamilyOverrides?.[newest[0]] === 0 && !Object.hasOwn(body.bestInFamilyOverrides, older[0])) {
+        started.resolve();
+        await release.promise;
+      }
+    }));
+    t.after(() => release.resolve());
+    await page.goto("http://magpie.test/?view=providers");
+    await page.locator(".row.provider", { hasText: "Plain" }).click();
+    const editor = page.locator("#modal:not([hidden]) .editor");
+    const chip = (id) => editor.locator(".mchip", { hasText: id });
+    await editor.locator(".mserves [data-serves=best]").click();
+    await editor.getByRole("button", { name: "Automatic model limit", exact: true }).click();
+    await page.getByRole("menuitemradio", { name: "48", exact: true }).click();
+    await editor.getByText("Model preview unavailable", { exact: true }).waitFor();
+    await Promise.all([
+      page.waitForResponse((r) => r.url().endsWith("/api/provider/models") && r.ok()),
+      editor.getByRole("button", { name: "Try again", exact: true }).click(),
+    ]);
+    for (const [overrides, style, count] of [
+      [{ [newest[1]]: 0 }, "best-excluded", 1],
+      [{ [newest[1]]: 1 }, "on", 2],
+      [{}, "auto", 2],
+    ]) {
+      const preview = page.waitForRequest((r) => r.url().endsWith("/api/provider/models"));
+      await chip(newest[1]).click();
+      assert.deepEqual((await preview).postDataJSON().bestInFamilyOverrides, overrides);
+      await chip(newest[1]).and(editor.locator(`.mchip.${style}`)).waitFor();
+      await editor.getByText(`Exposed models: ${count}`, { exact: true }).waitFor();
+    }
+    await chip(newest[0]).click();
+    await started.promise;
+    await chip(older[0]).click();
+    await chip(older[0]).and(editor.locator(".mchip.best-excluded")).waitFor();
+    await chip(older[0]).click();
+    await chip(older[0]).and(editor.locator(".mchip[aria-pressed=true]")).waitFor();
+    const stale = page.waitForResponse((r) => r.url().endsWith("/api/provider/models") && r.request().postDataJSON().bestInFamilyOverrides?.[newest[0]] === 0 && !Object.hasOwn(r.request().postDataJSON().bestInFamilyOverrides, older[0]));
+    release.resolve();
+    await stale;
+    assert.equal(await chip(older[0]).getAttribute("aria-pressed"), "true");
+    assert.equal(await chip(newest[0]).getAttribute("aria-pressed"), "false");
+    assert.equal(await editor.locator(".mserves .opt.on").getAttribute("data-serves"), "best");
+    await chip(newest[0]).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Restore automatic selection" }).click();
+    await chip(newest[0]).and(editor.locator(".mchip[aria-pressed=true]")).waitFor();
+    await editor.getByText("Exposed models: 3", { exact: true }).waitFor();
+    await editor.locator(".bar").getByRole("button", { name: "Save", exact: true }).click();
+    await editor.waitFor({ state: "detached" });
+    assert.deepEqual(saves[0].bestInFamilyOverrides, { [older[0]]: 1 });
+    assert.equal(saves[0].bestInFamilyLimit, 48);
+    assert.equal(saves[0].bestInFamily, true);
+    assert.deepEqual(saves[0].models || [], []);
+    await page.locator(".row.provider", { hasText: "Plain" }).click();
+    assert.equal(await editor.locator(".mserves .opt.on").getAttribute("data-serves"), "best");
+    assert.equal(await chip(older[0]).getAttribute("aria-pressed"), "true");
+  });
+
   for (const lang of Object.keys(words)) {
     const w = words[lang];
     for (const width of [1100, 420]) {

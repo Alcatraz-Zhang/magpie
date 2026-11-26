@@ -349,6 +349,12 @@ func moveModelRefs(pid, from, to string, account bool) error {
 	if i >= 0 {
 		q := &f.Providers[i]
 		q.Models, q.PickedFrom, q.Delisted = moved(q.Models), moved(q.PickedFrom), moved(q.Delisted)
+		if v, ok := q.BestInFamilyOverrides[from]; ok {
+			if _, has := q.BestInFamilyOverrides[to]; !has {
+				q.BestInFamilyOverrides[to] = v
+			}
+			delete(q.BestInFamilyOverrides, from)
+		}
 		for k, ms := range q.AccountModels {
 			q.AccountModels[k] = moved(ms)
 		}

@@ -13,8 +13,7 @@
 // editor waits for, and app.js when it draws a provider's models without
 // it (they show in the vendor's order for that moment); it weighs nothing
 // on the core.
-// It also holds a model's API menu (modelAPIPick), opened from a chip's
-// right-click.
+// It also holds the model selection controls and each chip's API menu.
 
 // the makers, in the order their groups go, by the logo the server names
 const MAKERS = {
@@ -101,4 +100,143 @@ window.modelAPIPick = function (c, p, id, apis, apiNow, draw) {
     draw();
     status(v ? t("{model} is asked on {api} once saved", { model: id, api: apiLabel(v) }) : t("{model} is asked as its vendor's list says once saved", { model: id }), "ok");
   }, "API this model is asked on", "model-api-menu");
+};
+
+window.modelBulk = function (p, q, noAPI, draw) {
+  // every model at once (those the filter shows, when there is one), or none
+  const bulk = el("div", "mbulk");
+  const allOn = el("button", "text action", t("Select all"));
+  allOn.title = t("Pick every model listed that this provider can serve (those the filter shows)");
+  allOn.onclick = () => {
+    const f = (q?.value || "").trim().toLowerCase();
+    const ids = p.models.filter((m) => !noAPI(m)).filter((m) => !f || m.id.toLowerCase().includes(f) || (m.name || "").toLowerCase().includes(f) || (m.default || "").toLowerCase().includes(f)).map((m) => m.id);
+    draft.chosen = [...draft.chosen, ...ids.filter((id) => !draft.chosen.includes(id))];
+    draft.none = true;
+    draw();
+  };
+  const allOff = el("button", "text action", t("Select none"));
+  allOff.title = t("Unpick every model");
+  allOff.onclick = () => { draft.chosen = []; draft.none = true; draft.picking = false; draw(); };
+  bulk.append(allOn, allOff);
+  // just the free ones, offered when the list has free and paid
+  const isFree = (m) => m.free || m.zero || namedFree(m.id, m.name);
+  if (p.models.some(isFree) && !p.models.every(isFree)) {
+    const freeOn = el("button", "text action", t("Free only"));
+    freeOn.title = t("Pick only the free models (those the filter shows), unpicking the others");
+    freeOn.onclick = () => {
+      const f = (q?.value || "").trim().toLowerCase();
+      draft.chosen = p.models.filter((m) => isFree(m) && !noAPI(m) && (!f || m.id.toLowerCase().includes(f) || (m.name || "").toLowerCase().includes(f) || (m.default || "").toLowerCase().includes(f))).map((m) => m.id);
+      draft.none = true;
+      draw();
+    };
+    bulk.append(freeOn);
+  }
+  // unpicks those whose last test failed (H20 on Discord)
+  const workOn = el("button", "text action works-only", t("Working only"));
+  const failedPicks = () => {
+    const got = modelTests[p.id] || {};
+    const ids = servedIds(p);
+    return [ids, ids.filter((id) => got[id] && !got[id].ok)];
+  };
+  workOn.onclick = () => {
+    const [ids, bad] = failedPicks();
+    if (!bad.length) return;
+    draft.chosen = ids.filter((id) => !bad.includes(id));
+    draft.none = true;
+    draw();
+    status(t(bad.length === 1 ? "Unpicked 1 model that didn't answer" : "Unpicked {n} models that didn't answer", { n: bad.length }), "ok");
+  };
+  const drawWorkOn = () => {
+    // in the row only once a test has answered, not there hidden till then
+    if (!Object.values(modelTests[p.id] || {}).some((x) => x)) { workOn.remove(); return; }
+    if (!workOn.isConnected) bulk.append(workOn);
+    const bad = failedPicks()[1].length;
+    workOn.disabled = !bad;
+    workOn.title = bad ? t("Unpick the models whose last test failed; those that answered, and those not tested, stay picked")
+      : t("Every picked model that was tested answered");
+  };
+  return { bulk, drawWorkOn };
+};
+
+// The editor keeps its own override draft. The provider previews its
+// exposure from the current catalog, without fetching or saving the list.
+window.bestFamilyModels = function (p, box, draw) {
+  const d = draft, active = () => bestChosen() && !decideOnly(p);
+  const limit = () => d.bestLimit ?? (p.preset === "remote-magpie" ? 0 : 24);
+  const cap = el("button", "text action best-limit");
+  const count = el("span", "hint");
+  const retry = el("button", "text action", t("Try again"));
+  const controls = el("div", "mbulk");
+  controls.append(cap, count, retry);
+  cap.setAttribute("aria-label", t("Automatic model limit"));
+  const choices = [null, 24, 48, 96, 192, 0].map((v) => ({
+    v, name: v === null ? "Default" : v === 0 ? "Unlimited" : String(v), literalName: !!v,
+  }));
+  cap.onclick = () => openProtoMenu(cap, choices, d.bestLimit, (v) => { d.bestLimit = v; draw(); }, "Automatic model limit");
+  let request;
+  retry.onclick = () => { request = null; draw(); };
+  const expose = (ids) => {
+    retry.hidden = !request?.failed;
+    count.textContent = retry.hidden ? t("Exposed models: {n}", { n: ids.length }) : t("Model preview unavailable");
+    return ids;
+  };
+  const ids = (noAPI) => {
+    controls.hidden = !active();
+    if (controls.hidden) { request = null; return null; }
+    cap.textContent = `${t("Automatic model limit")} · ${limit() || t("Unlimited")}`;
+    const modelPrefs = Object.fromEntries(Object.entries(d.modelPrefs || {}).filter(([, m]) => m.api !== undefined).map(([id, { api }]) => [id, { api }]));
+    const args = { ...bestSettingsOfDraft(), modelPrefs, listOff: d.listOff }, key = JSON.stringify(args);
+    if (request?.key === key && request.models) return expose(request.models);
+
+    // The catalog flags give the initial drawing while the preview returns.
+    const rows = d.listOff ? [] : p.models.filter((m) => !noAPI(m));
+    const automatic = rows.filter((m) => m.best).slice(0, limit() || rows.length);
+    const overrides = args.bestInFamilyOverrides;
+    const shown = [...new Set([...automatic.filter((m) => overrides[m.id] !== 0), ...rows.filter((m) => overrides[m.id] === 1)].map((m) => m.id))];
+    if (request?.key !== key) {
+      const asked = request = { key };
+      const current = () => request === asked && draft === d && box.isConnected && active();
+      api("provider/models", { id: p.id, bestInFamilyPreview: true, ...args }).then((r) => {
+        if (!current() || !Array.isArray(r.models)) return;
+        asked.models = r.models;
+        if (shown.length !== r.models.length || shown.some((id, i) => id !== r.models[i])) draw();
+      }, (e) => {
+        if (!current()) return;
+        asked.failed = true;
+        retry.title = e.message;
+        draw();
+      });
+    }
+    return expose(shown);
+  };
+  const edit = (id, v) => {
+    d.bestOverrides = { ...d.bestOverrides, [id]: v };
+    if (v === null) delete d.bestOverrides[id];
+    draw();
+  };
+  const nextOverride = (id) => {
+    const v = d.bestOverrides[id];
+    return v === 0 ? 1 : v === 1 ? null : 0;
+  };
+  return {
+    active, controls, ids, edit,
+    cycle: (id) => edit(id, nextOverride(id)),
+    add: (ids) => { d.bestOverrides = { ...d.bestOverrides, ...Object.fromEntries(ids.map((id) => [id, 1])) }; },
+    included: (id) => active() && d.bestOverrides[id] === 1,
+    restore: (id) => active() && Object.hasOwn(d.bestOverrides, id),
+    mark(c, id, on) {
+      if (!active()) return;
+      c.setAttribute("aria-pressed", on);
+      const v = d.bestOverrides[id], next = nextOverride(id);
+      c.classList.toggle("best-excluded", v === 0);
+      const action = t(next === null ? "Restore automatic selection" : next === 1 ? "Include in Best in family" : "Exclude from Best in family");
+      const state = v === 1 ? t("Manually included") : v === 0 ? t("Manually excluded") : "";
+      c.title = [c.title, state, action].filter(Boolean).join("\n");
+    },
+    hint() {
+      if (d.unlisted) return t("Best in family: routing groups use the automatic choices and your overrides.");
+      if (!limit()) return t("Best in family: agents see the newest model of each family it lists (dashed). A newer one it lists later takes the old one's place.");
+      return t("Best in family: agents see the newest model of each family it lists (dashed), up to {n} automatic choices. A newer one it lists later takes the old one's place.", { n: limit() });
+    },
+  };
 };
